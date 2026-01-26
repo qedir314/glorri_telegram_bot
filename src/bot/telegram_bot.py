@@ -8,7 +8,7 @@ import asyncio
 from dotenv import load_dotenv
 from telegram import Bot
 from telegram.constants import ParseMode
-from database import get_unsent_jobs, mark_jobs_as_sent, get_unsent_jobs_count
+from src.database import get_unsent_jobs, mark_jobs_as_sent, get_unsent_jobs_count
 
 # Load environment variables
 load_dotenv()

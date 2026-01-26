@@ -340,7 +340,7 @@ class GlorriDriver:
         existing_urls = set()
         if check_existing:
             try:
-                from database import get_existing_job_urls
+                from src.database.db import get_existing_job_urls
                 existing_urls = get_existing_job_urls()
                 print(f"📊 Found {len(existing_urls)} existing jobs in database")
             except ImportError:

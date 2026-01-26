@@ -4,9 +4,8 @@ Uses GlorriDriver to scrape job listings from https://jobs.glorri.az/
 Saves jobs to SQLite database and fetches detailed job information
 """
 
-from glorri_selenium import GlorriDriver
-from database import insert_jobs_bulk, get_job_count, get_job_details_count
-from async_scraper import run_async_scraper
+from src.scraper import GlorriDriver, run_async_scraper
+from src.database import insert_jobs_bulk, get_job_count, get_job_details_count
 
 
 def main():
@@ -35,7 +34,7 @@ def main():
         print(f"✓ Skipped: {skipped} existing jobs")
         print(f"✓ Total jobs in database: {get_job_count()}")
         
-        # Print first 5 jobs as sample
+        # Print first 3 jobs as sample
         for i, job in enumerate(jobs[:3], 1):
             print(f"\n[{i}] {job.title}")
             print(f"    Company: {job.company}")
@@ -46,8 +45,8 @@ def main():
             if job.job_url:
                 print(f"    URL: {job.job_url}")
         
-        if len(jobs) > 5:
-            print(f"\n... and {len(jobs) - 5} more jobs")
+        if len(jobs) > 3:
+            print(f"\n... and {len(jobs) - 3} more jobs")
         
         print("\n" + "=" * 50)
         print("Initial scraping completed!")

@@ -2,18 +2,22 @@
 Database module for storing Glorri job listings in SQLite.
 """
 
+import os
 import sqlite3
 from datetime import datetime
 from typing import List, Optional
 from dataclasses import dataclass
 
 
-# Database configuration
-DATABASE_NAME = "glorri_jobs.db"
+# Database configuration - store in data/ directory
+DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data")
+DATABASE_NAME = os.path.join(DATA_DIR, "glorri_jobs.db")
 
 
 def get_connection() -> sqlite3.Connection:
     """Get a connection to the SQLite database."""
+    # Ensure data directory exists
+    os.makedirs(DATA_DIR, exist_ok=True)
     conn = sqlite3.connect(DATABASE_NAME)
     conn.row_factory = sqlite3.Row
     return conn

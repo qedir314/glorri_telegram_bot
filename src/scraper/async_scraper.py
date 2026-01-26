@@ -8,7 +8,7 @@ import aiohttp
 from bs4 import BeautifulSoup
 from typing import Optional, Dict, List
 import re
-from database import get_jobs_without_details, insert_job_details, get_job_details_count
+from src.database import get_jobs_without_details, insert_job_details, get_job_details_count
 
 
 # Request headers to mimic a browser

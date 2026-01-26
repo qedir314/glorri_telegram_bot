@@ -3,7 +3,6 @@ Scheduler for Glorri Jobs Bot.
 Runs scraping and Telegram notifications every 6 hours.
 """
 
-import os
 import sys
 from datetime import datetime
 from dotenv import load_dotenv
@@ -13,11 +12,10 @@ from apscheduler.triggers.interval import IntervalTrigger
 # Load environment variables
 load_dotenv()
 
-# Import after loading env vars
-from glorri_selenium import GlorriDriver
-from database import insert_jobs_bulk, get_job_count
-from async_scraper import run_async_scraper
-from telegram_bot import run_send_jobs, run_test_message
+# Import from src packages
+from src.scraper import GlorriDriver, run_async_scraper
+from src.database import insert_jobs_bulk, get_job_count
+from src.bot import run_send_jobs, run_test_message
 
 
 def scrape_and_notify():
