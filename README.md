@@ -9,6 +9,7 @@ A Telegram bot that scrapes job listings from [Glorri Jobs](https://jobs.glorri.
 - 📝 Fetches detailed job information asynchronously
 - 📤 Sends new job notifications to Telegram
 - ⏰ Runs automatically every 6 hours
+- 🐳 Docker support for easy deployment
 
 ## Project Structure
 
@@ -16,22 +17,18 @@ A Telegram bot that scrapes job listings from [Glorri Jobs](https://jobs.glorri.
 glorri_telegram_bot/
 ├── src/
 │   ├── scraper/          # Web scraping modules
-│   │   ├── selenium_driver.py
-│   │   └── async_scraper.py
 │   ├── database/         # Database operations
-│   │   └── db.py
 │   └── bot/              # Telegram bot
-│       └── telegram_bot.py
 ├── data/                 # Database storage
 ├── config/               # Configuration examples
-│   └── .env.example
-├── .env                  # Your configuration (not in git)
+├── Dockerfile
+├── docker-compose.yml
 ├── main.py               # Run once
 ├── scheduler.py          # Run scheduled
 └── requirements.txt
 ```
 
-## Setup
+## Local Setup
 
 1. **Install dependencies:**
    ```bash
@@ -44,27 +41,58 @@ glorri_telegram_bot/
    # Edit .env with your Telegram credentials
    ```
 
-3. **Create Telegram Bot:**
-   - Message [@BotFather](https://t.me/BotFather) on Telegram
-   - Send `/newbot` and follow instructions
-   - Copy the bot token to `.env`
+3. **Run:**
+   ```bash
+   python scheduler.py
+   ```
 
-## Usage
+## Docker Deployment (DigitalOcean)
 
-**Run once:**
+### Option 1: Using Docker Compose
+
 ```bash
-python scheduler.py --once
+# Clone the repo
+git clone https://github.com/qedir314/glorri_telegram_bot.git
+cd glorri_telegram_bot
+
+# Configure environment
+cp config/.env.example .env
+nano .env  # Add your Telegram credentials
+
+# Build and run
+docker-compose up -d
+
+# View logs
+docker-compose logs -f
+
+# Stop
+docker-compose down
 ```
 
-**Test with 2-minute interval:**
+### Option 2: Using Docker directly
+
 ```bash
-python scheduler.py --test
+# Build image
+docker build -t glorri-bot .
+
+# Run container
+docker run -d \
+  --name glorri-telegram-bot \
+  --restart unless-stopped \
+  --env-file .env \
+  -v $(pwd)/data:/app/data \
+  glorri-bot
 ```
 
-**Run in production (6-hour interval):**
-```bash
-python scheduler.py
-```
+### DigitalOcean Droplet Setup
+
+1. Create a Droplet (Ubuntu 22.04, 1GB RAM minimum)
+2. SSH into the droplet
+3. Install Docker:
+   ```bash
+   curl -fsSL https://get.docker.com | sh
+   ```
+4. Follow Docker Compose instructions above
 
 ## Configuration
 
@@ -74,3 +102,4 @@ BASE_URL=https://jobs.glorri.az/
 TELEGRAM_BOT_TOKEN=your_bot_token_here
 TELEGRAM_CHAT_ID=your_chat_id_here
 ```
+

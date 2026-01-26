@@ -1,0 +1,19 @@
+version: '3.8'
+
+services:
+  glorri-bot:
+    build: .
+    container_name: glorri-telegram-bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      # Persist database between container restarts
+      - ./data:/app/data
+    environment:
+      - TZ=Asia/Baku
+    # Reduce memory usage
+    deploy:
+      resources:
+        limits:
+          memory: 1G
