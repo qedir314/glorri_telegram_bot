@@ -119,7 +119,7 @@ if __name__ == "__main__":
             print("Usage: python scheduler.py [--once | --test]")
             print("  --once  : Run once and exit")
             print("  --test  : Run with 2-minute interval for testing")
-            print("  (no arg): Run with 6-hour interval")
+            print("  (no arg): Run with 3-hour interval")
     else:
-        # Run scheduler with 6-hour interval
-        run_scheduler(interval_minutes=360)
+        # Run scheduler with 3-hour interval
+        run_scheduler(interval_minutes=180)

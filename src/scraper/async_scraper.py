@@ -19,30 +19,41 @@ HEADERS = {
 }
 
 
-async def fetch_page(session: aiohttp.ClientSession, url: str) -> Optional[str]:
+async def fetch_page(session: aiohttp.ClientSession, url: str, max_retries: int = 3) -> Optional[str]:
     """
-    Fetch a single page asynchronously.
+    Fetch a single page asynchronously with retry logic for rate limiting.
     
     Args:
         session: aiohttp client session
         url: URL to fetch
+        max_retries: Maximum number of retries for 429 errors
         
     Returns:
         HTML content or None if failed
     """
-    try:
-        async with session.get(url, headers=HEADERS, timeout=aiohttp.ClientTimeout(total=30)) as response:
-            if response.status == 200:
-                return await response.text()
-            else:
-                print(f"✗ Failed to fetch {url}: Status {response.status}")
-                return None
-    except asyncio.TimeoutError:
-        print(f"✗ Timeout fetching {url}")
-        return None
-    except Exception as e:
-        print(f"✗ Error fetching {url}: {e}")
-        return None
+    for attempt in range(max_retries):
+        try:
+            async with session.get(url, headers=HEADERS, timeout=aiohttp.ClientTimeout(total=30)) as response:
+                if response.status == 200:
+                    return await response.text()
+                elif response.status == 429:
+                    # Rate limited - wait and retry
+                    wait_time = (attempt + 1) * 10  # 10, 20, 30 seconds
+                    print(f"⚠ Rate limited (429), waiting {wait_time}s before retry...")
+                    await asyncio.sleep(wait_time)
+                    continue
+                else:
+                    print(f"✗ Failed to fetch {url}: Status {response.status}")
+                    return None
+        except asyncio.TimeoutError:
+            print(f"✗ Timeout fetching {url}")
+            return None
+        except Exception as e:
+            print(f"✗ Error fetching {url}: {e}")
+            return None
+    
+    print(f"✗ Max retries exceeded for {url}")
+    return None
 
 
 def parse_job_details(html: str, url: str) -> Dict:
@@ -253,13 +264,13 @@ async def scrape_job_details(job: dict, session: aiohttp.ClientSession, semaphor
         else:
             print(f"⚠ Job ID {job_id} details already exist")
         
-        # Increased delay to avoid rate limiting (429 errors)
-        await asyncio.sleep(1.5)
+        # Longer delay to avoid rate limiting (429 errors)
+        await asyncio.sleep(3)
         
         return success
 
 
-async def scrape_all_job_details(max_concurrent: int = 5) -> tuple:
+async def scrape_all_job_details(max_concurrent: int = 2) -> tuple:
     """
     Scrape details for all jobs that don't have details yet.
     
