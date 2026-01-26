@@ -33,6 +33,7 @@ def init_database():
             location TEXT,
             job_url TEXT UNIQUE,
             posted_date TEXT,
+            is_sent_to_telegram INTEGER DEFAULT 0,
             created_at TEXT DEFAULT CURRENT_TIMESTAMP,
             updated_at TEXT DEFAULT CURRENT_TIMESTAMP
         )
@@ -381,6 +382,67 @@ def get_job_details_count() -> int:
     cursor = conn.cursor()
     
     cursor.execute("SELECT COUNT(*) FROM job_details")
+    count = cursor.fetchone()[0]
+    
+    conn.close()
+    return count
+
+
+# ============== Telegram Notification Functions ==============
+
+def get_unsent_jobs() -> list:
+    """Get all jobs that haven't been sent to Telegram yet."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("""
+        SELECT j.*, jd.description, jd.requirements, jd.job_type, jd.job_level,
+               jd.category, jd.salary, jd.deadline, jd.views
+        FROM jobs j
+        LEFT JOIN job_details jd ON j.id = jd.job_id
+        WHERE j.is_sent_to_telegram = 0
+        ORDER BY j.posted_date DESC
+    """)
+    rows = cursor.fetchall()
+    
+    conn.close()
+    return [dict(row) for row in rows]
+
+
+def mark_jobs_as_sent(job_ids: list) -> int:
+    """Mark jobs as sent to Telegram.
+    
+    Args:
+        job_ids: List of job IDs to mark as sent
+        
+    Returns:
+        Number of jobs marked as sent
+    """
+    if not job_ids:
+        return 0
+    
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    placeholders = ','.join('?' * len(job_ids))
+    cursor.execute(f"""
+        UPDATE jobs SET is_sent_to_telegram = 1
+        WHERE id IN ({placeholders})
+    """, job_ids)
+    
+    conn.commit()
+    updated = cursor.rowcount
+    conn.close()
+    
+    return updated
+
+
+def get_unsent_jobs_count() -> int:
+    """Get count of jobs not yet sent to Telegram."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT COUNT(*) FROM jobs WHERE is_sent_to_telegram = 0")
     count = cursor.fetchone()[0]
     
     conn.close()
