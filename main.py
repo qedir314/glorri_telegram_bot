@@ -1,18 +1,19 @@
 """
 Main script for Glorri Jobs Scraper
 Uses GlorriDriver to scrape job listings from https://jobs.glorri.az/
-Saves jobs to SQLite database
+Saves jobs to SQLite database and fetches detailed job information
 """
 
 from glorri_selenium import GlorriDriver
-from database import insert_jobs_bulk, get_job_count
+from database import insert_jobs_bulk, get_job_count, get_job_details_count
+from async_scraper import run_async_scraper
 
 
 def main():
     """Main function to scrape Glorri jobs and save to database."""
     print("=" * 50)
     print("Glorri Jobs Scraper")
-    print("Scrolling until last vacancy is 14 days old")
+    print("Scrolling until last vacancy is 7 days old")
     print("=" * 50)
     
     # Create driver and run scraper
@@ -20,7 +21,7 @@ def main():
         # Wait for initial page load
         driver.wait_for_page_load(3)
         
-        # Scroll until last vacancy is 14 days old
+        # Scroll until last vacancy is 7 days old
         print("\n--- Scrolling to load jobs (until 7 days old) ---")
         jobs = driver.scroll_until_days_old(target_days=7)
         
@@ -35,7 +36,7 @@ def main():
         print(f"✓ Total jobs in database: {get_job_count()}")
         
         # Print first 5 jobs as sample
-        for i, job in enumerate(jobs[:5], 1):
+        for i, job in enumerate(jobs[:3], 1):
             print(f"\n[{i}] {job.title}")
             print(f"    Company: {job.company}")
             print(f"    Location: {job.location}")
@@ -48,12 +49,20 @@ def main():
         if len(jobs) > 5:
             print(f"\n... and {len(jobs) - 5} more jobs")
         
-        
         print("\n" + "=" * 50)
-        print("Scraping completed!")
+        print("Initial scraping completed!")
         print("=" * 50)
-        
-        return jobs
+    
+    # Now fetch detailed information for all jobs
+    print("\n" + "=" * 50)
+    print("Fetching detailed job information...")
+    print("=" * 50)
+    
+    successful, failed = run_async_scraper(max_concurrent=5)
+    
+    print(f"\n✓ Jobs with details: {get_job_details_count()}")
+    
+    return jobs
 
 
 if __name__ == "__main__":

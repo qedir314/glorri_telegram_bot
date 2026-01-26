@@ -3,6 +3,8 @@ Selenium driver for accessing Glorri Jobs website (https://jobs.glorri.az/)
 This module provides a GlorriDriver class to interact with the job listing website.
 """
 
+import os
+from dotenv import load_dotenv
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
@@ -16,6 +18,9 @@ import re
 from datetime import datetime, timedelta
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 @dataclass
@@ -45,7 +50,7 @@ class GlorriDriver:
             jobs = driver.get_job_listings()
     """
     
-    BASE_URL = "https://jobs.glorri.az/"
+    BASE_URL = os.getenv("BASE_URL", "https://google.com/")
     
     def __init__(self, headless: bool = True, timeout: int = 10):
         """
@@ -316,7 +321,7 @@ class GlorriDriver:
             print(f"✗ Error getting last visible date: {e}")
             return None, None
     
-    def scroll_until_days_old(self, target_days: int = 14, max_scrolls: int = 100, delay: float = 1.5) -> List[JobListing]:
+    def scroll_until_days_old(self, target_days: int = 14, max_scrolls: int = 100, delay: float = 1.5, check_existing: bool = True) -> List[JobListing]:
         """
         Scroll until the last vacancy is at least target_days old.
         
@@ -324,14 +329,27 @@ class GlorriDriver:
             target_days: Stop scrolling when last vacancy is this many days old (default 14).
             max_scrolls: Maximum number of scroll attempts to prevent infinite loops.
             delay: Delay between scrolls in seconds.
+            check_existing: If True, stop early if all visible jobs already exist in database.
             
         Returns:
             List of all job listings loaded during scrolling.
         """
         print(f"📜 Scrolling until last vacancy is {target_days} days old...")
         
+        # Get existing job URLs from database for duplicate checking
+        existing_urls = set()
+        if check_existing:
+            try:
+                from database import get_existing_job_urls
+                existing_urls = get_existing_job_urls()
+                print(f"📊 Found {len(existing_urls)} existing jobs in database")
+            except ImportError:
+                print("⚠️ Could not import database module, skipping duplicate check")
+                check_existing = False
+        
         scroll_count = 0
         previous_height = 0
+        previous_job_count = 0
         
         while scroll_count < max_scrolls:
             # Scroll to bottom
@@ -342,25 +360,57 @@ class GlorriDriver:
             # Check if page height changed (new content loaded)
             current_height = self.driver.execute_script("return document.body.scrollHeight")
             
+            # Get current job cards count and URLs
+            job_cards = self.driver.find_elements(By.CSS_SELECTOR, "a[href*='/vacancies/']")
+            current_job_count = len(job_cards)
+            
             # Get the last visible date
             last_date, date_str = self.get_last_visible_date()
             
             if last_date:
                 days_ago = self.get_days_ago(last_date)
-                print(f"✓ Scroll {scroll_count}: Last vacancy date = {date_str} ({days_ago} days ago)")
+                status_msg = f"✓ Scroll {scroll_count}: Last vacancy = {date_str} ({days_ago} days ago), {current_job_count} jobs loaded"
+            else:
+                days_ago = 0
+                status_msg = f"✓ Scroll {scroll_count}: {current_job_count} jobs loaded"
+            
+            # Check for existing jobs if enabled
+            if check_existing and existing_urls:
+                # Normalize URLs by removing query parameters for comparison
+                def normalize_url(url):
+                    if url and '?' in url:
+                        return url.split('?')[0]
+                    return url
                 
-                if days_ago >= target_days:
-                    print(f"✅ Reached target! Last vacancy is {days_ago} days old (>= {target_days})")
+                current_urls_raw = {card.get_attribute("href") for card in job_cards if card.get_attribute("href")}
+                current_urls_normalized = {normalize_url(url) for url in current_urls_raw}
+                existing_urls_normalized = {normalize_url(url) for url in existing_urls}
+                
+                new_urls = current_urls_normalized - existing_urls_normalized
+                new_count = len(new_urls)
+                
+                status_msg += f", {new_count} new"
+                print(status_msg)
+                
+                # If no new jobs found, stop immediately
+                if new_count == 0:
+                    print(f"✅ Stopping: All jobs already in database")
                     break
             else:
-                print(f"✓ Scroll {scroll_count}: Could not parse last date")
+                print(status_msg)
+            
+            # Check if reached target days
+            if last_date and days_ago >= target_days:
+                print(f"✅ Reached target! Last vacancy is {days_ago} days old (>= {target_days})")
+                break
             
             # Check if we've reached the end of content
-            if current_height == previous_height:
-                print("⚠️ No more content to load (page height unchanged)")
+            if current_height == previous_height and current_job_count == previous_job_count:
+                print("⚠️ No more content to load")
                 break
             
             previous_height = current_height
+            previous_job_count = current_job_count
         
         if scroll_count >= max_scrolls:
             print(f"⚠️ Reached maximum scroll limit ({max_scrolls})")

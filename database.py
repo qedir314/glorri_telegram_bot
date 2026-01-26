@@ -24,6 +24,7 @@ def init_database():
     conn = get_connection()
     cursor = conn.cursor()
     
+    # Main jobs table (basic info from listing page)
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS jobs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -37,7 +38,27 @@ def init_database():
         )
     """)
     
-    # Create index for faster lookups
+    # Job details table (detailed info from job page)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS job_details (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            job_id INTEGER UNIQUE,
+            job_url TEXT UNIQUE,
+            description TEXT,
+            requirements TEXT,
+            job_type TEXT,
+            job_level TEXT,
+            education TEXT,
+            category TEXT,
+            salary TEXT,
+            deadline TEXT,
+            views INTEGER,
+            scraped_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (job_id) REFERENCES jobs(id)
+        )
+    """)
+    
+    # Create indexes for faster lookups
     cursor.execute("""
         CREATE INDEX IF NOT EXISTS idx_job_url ON jobs(job_url)
     """)
@@ -46,9 +67,37 @@ def init_database():
         CREATE INDEX IF NOT EXISTS idx_posted_date ON jobs(posted_date)
     """)
     
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_job_details_job_id ON job_details(job_id)
+    """)
+    
     conn.commit()
     conn.close()
     print("✓ Database initialized")
+
+
+def job_exists(job_url: str) -> bool:
+    """Check if a job URL already exists in the database."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT 1 FROM jobs WHERE job_url = ? LIMIT 1", (job_url,))
+    exists = cursor.fetchone() is not None
+    
+    conn.close()
+    return exists
+
+
+def get_existing_job_urls() -> set:
+    """Get all existing job URLs from the database as a set for fast lookup."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT job_url FROM jobs")
+    urls = {row[0] for row in cursor.fetchall()}
+    
+    conn.close()
+    return urls
 
 
 def insert_job(title: str, company: str, location: str, job_url: str, posted_date: Optional[datetime] = None) -> bool:
@@ -206,6 +255,136 @@ def clear_all_jobs():
     
     print(f"✓ Deleted {deleted} jobs from database")
     return deleted
+
+
+def clear_all_job_details():
+    """Delete all job details from the database (for re-scraping)."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("DELETE FROM job_details")
+    conn.commit()
+    
+    deleted = cursor.rowcount
+    conn.close()
+    
+    print(f"✓ Deleted {deleted} job details from database")
+    return deleted
+
+
+# ============== Job Details Functions ==============
+
+def insert_job_details(
+    job_id: int,
+    job_url: str,
+    description: str = None,
+    requirements: str = None,
+    job_type: str = None,
+    job_level: str = None,
+    education: str = None,
+    category: str = None,
+    salary: str = None,
+    deadline: str = None,
+    views: int = None
+) -> bool:
+    """
+    Insert job details into the job_details table.
+    
+    Args:
+        job_id: ID from the jobs table
+        job_url: URL of the job
+        description: Job description text
+        requirements: Job requirements text
+        job_type: Type of employment (Full-time, Part-time, etc.)
+        job_level: Seniority level
+        education: Required education
+        category: Job category
+        salary: Salary information
+        deadline: Application deadline
+        views: Number of views
+        
+    Returns:
+        True if inserted successfully, False if already exists
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    try:
+        cursor.execute("""
+            INSERT INTO job_details 
+            (job_id, job_url, description, requirements, job_type, job_level, 
+             education, category, salary, deadline, views)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (job_id, job_url, description, requirements, job_type, job_level,
+              education, category, salary, deadline, views))
+        
+        conn.commit()
+        return True
+        
+    except sqlite3.IntegrityError:
+        # Job details already exist
+        return False
+    finally:
+        conn.close()
+
+
+def get_jobs_without_details() -> list:
+    """Get all jobs that don't have details scraped yet."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("""
+        SELECT j.* FROM jobs j
+        LEFT JOIN job_details jd ON j.id = jd.job_id
+        WHERE jd.id IS NULL
+        ORDER BY j.posted_date DESC
+    """)
+    rows = cursor.fetchall()
+    
+    conn.close()
+    return [dict(row) for row in rows]
+
+
+def get_job_details(job_id: int) -> Optional[dict]:
+    """Get details for a specific job."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT * FROM job_details WHERE job_id = ?", (job_id,))
+    row = cursor.fetchone()
+    
+    conn.close()
+    return dict(row) if row else None
+
+
+def get_all_job_details() -> list:
+    """Get all job details with job info."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("""
+        SELECT j.*, jd.description, jd.requirements, jd.job_type, jd.job_level,
+               jd.education, jd.category, jd.salary, jd.deadline, jd.views, jd.scraped_at
+        FROM jobs j
+        INNER JOIN job_details jd ON j.id = jd.job_id
+        ORDER BY j.posted_date DESC
+    """)
+    rows = cursor.fetchall()
+    
+    conn.close()
+    return [dict(row) for row in rows]
+
+
+def get_job_details_count() -> int:
+    """Get count of jobs with details scraped."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT COUNT(*) FROM job_details")
+    count = cursor.fetchone()[0]
+    
+    conn.close()
+    return count
 
 
 # Initialize database when module is imported
