@@ -78,6 +78,7 @@ class GlorriDriver:
         chrome_options.add_argument("--disable-gpu")
         chrome_options.add_argument("--window-size=1920,1080")
         chrome_options.add_argument("--disable-blink-features=AutomationControlled")
+        chrome_options.add_argument("--remote-debugging-port=9222") # Fix for some Docker environments
         chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
         chrome_options.add_experimental_option("useAutomationExtension", False)
         
@@ -88,7 +89,20 @@ class GlorriDriver:
         )
         
         # Initialize the driver
-        service = Service(ChromeDriverManager().install())
+        # Check if running in Docker/Linux with system chromedriver
+        import shutil
+        system_driver_path = shutil.which("chromedriver") or "/usr/bin/chromedriver"
+        system_chromium_path = shutil.which("chromium") or "/usr/bin/chromium"
+        
+        if os.path.exists(system_driver_path) and os.path.exists(system_chromium_path):
+            print(f"✓ Using system Chromium at {system_chromium_path}")
+            print(f"✓ Using system ChromeDriver at {system_driver_path}")
+            chrome_options.binary_location = system_chromium_path
+            service = Service(executable_path=system_driver_path)
+        else:
+            print("✓ Using WebDriverManager for Chrome")
+            service = Service(ChromeDriverManager().install())
+
         self.driver = webdriver.Chrome(service=service, options=chrome_options)
         self.wait = WebDriverWait(self.driver, self.timeout)
         
