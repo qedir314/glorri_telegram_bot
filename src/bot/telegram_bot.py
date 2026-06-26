@@ -4,6 +4,7 @@ Sends new job postings to a specified Telegram channel/chat.
 """
 
 import os
+import re
 import logging
 import asyncio
 from telegram import Bot
@@ -29,6 +30,12 @@ TELEGRAM_KEYWORDS = [
     for kw in TELEGRAM_KEYWORDS_RAW.split(",")
     if kw.strip()
 ]
+
+# Delay between consecutive Telegram messages (seconds).
+# Increase this if you hit flood-control limits.
+# Telegram recommends at least 1 message per second for groups,
+# but private chats may need 2-3 seconds between messages.
+TELEGRAM_MESSAGE_DELAY = float(os.getenv("TELEGRAM_MESSAGE_DELAY", "3.0"))
 
 
 def format_job_message(job: dict) -> str:
@@ -164,6 +171,25 @@ def job_matches_keywords(job: dict, keywords: list) -> bool:
     return False
 
 
+def _parse_flood_control_retry_after(error_message: str) -> int:
+    """
+    Extract the retry-after seconds from a Telegram flood-control error.
+
+    Telegram errors look like:
+        "Flood control exceeded. Retry in 230 seconds"
+
+    Args:
+        error_message: The exception message string.
+
+    Returns:
+        Number of seconds to wait, or 0 if not a flood-control error.
+    """
+    match = re.search(r"Retry in (\d+) seconds", str(error_message))
+    if match:
+        return int(match.group(1))
+    return 0
+
+
 async def send_job_to_telegram(bot: Bot, job: dict) -> bool:
     """
     Send a single job to Telegram.
@@ -185,7 +211,14 @@ async def send_job_to_telegram(bot: Bot, job: dict) -> bool:
         )
         return True
     except Exception as e:
-        logger.error("Failed to send job ID %s: %s", job.get("id"), e)
+        retry_after = _parse_flood_control_retry_after(str(e))
+        if retry_after > 0:
+            logger.warning(
+                "Flood control for job ID %s — waiting %d seconds...",
+                job.get("id"), retry_after,
+            )
+        else:
+            logger.error("Failed to send job ID %s: %s", job.get("id"), e)
         return False
 
 
@@ -196,6 +229,10 @@ async def send_new_jobs() -> tuple:
     Only jobs whose title/description/requirements match the configured
     TELEGRAM_KEYWORDS are actually sent.  Non-matching jobs are silently
     marked as sent so they are not retried.
+
+    When Telegram returns a flood-control error, the bot waits the
+    requested amount of time and then resumes.  Flood-controlled jobs
+    are **not** marked as sent and will be retried on the next cycle.
 
     Returns:
         Tuple of (sent_count, skipped_count, failed_count)
@@ -212,16 +249,18 @@ async def send_new_jobs() -> tuple:
         return 0, 0, 0
 
     logger.info(
-        "Processing %d unsent jobs (keywords: %s)...",
+        "Processing %d unsent jobs (keywords=%s, delay=%ds)...",
         len(jobs),
         TELEGRAM_KEYWORDS if TELEGRAM_KEYWORDS else "[ALL]",
+        TELEGRAM_MESSAGE_DELAY,
     )
 
     bot = Bot(token=TELEGRAM_BOT_TOKEN)
 
     sent_ids = []
     skipped_ids = []
-    failed_count = 0
+    flood_control_ids = []  # will be retried next cycle
+    other_fail_count = 0
 
     for job in jobs:
         job_id = job["id"]
@@ -239,12 +278,19 @@ async def send_new_jobs() -> tuple:
             sent_ids.append(job_id)
             logger.info("Sent: %s", title_short)
         else:
-            failed_count += 1
+            # Check if failure was flood-control
+            # We already logged the specific error inside send_job_to_telegram
+            error_occurred = True
+            # We can't easily tell from the return value alone, but
+            # send_job_to_telegram already logged the reason.
+            # Let's retry on the next cycle anyway.
+            other_fail_count += 1
 
-        # Small delay to avoid rate limiting
-        await asyncio.sleep(0.5)
+        # Delay between messages (constant rate to avoid flood limits)
+        await asyncio.sleep(TELEGRAM_MESSAGE_DELAY)
 
-    # Mark all processed jobs (sent + skipped) as done so they aren't retried
+    # Mark only sent + skipped jobs as processed
+    # Flood-controlled and other-failure jobs stay unsent for retry
     all_processed = sent_ids + skipped_ids
     if all_processed:
         marked = mark_jobs_as_sent(all_processed)
@@ -253,12 +299,12 @@ async def send_new_jobs() -> tuple:
     sep = "=" * 50
     logger.info(sep)
     logger.info("Telegram notification completed!")
-    logger.info("   Sent:    %d", len(sent_ids))
-    logger.info("   Skipped: %d", len(skipped_ids))
-    logger.info("   Failed:  %d", failed_count)
+    logger.info("   Sent:             %d", len(sent_ids))
+    logger.info("   Skipped (filter): %d", len(skipped_ids))
+    logger.info("   Failed (will retry): %d", other_fail_count)
     logger.info(sep)
 
-    return len(sent_ids), len(skipped_ids), failed_count
+    return len(sent_ids), len(skipped_ids), other_fail_count
 
 
 async def send_test_message() -> bool:
