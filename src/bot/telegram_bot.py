@@ -4,18 +4,31 @@ Sends new job postings to a specified Telegram channel/chat.
 """
 
 import os
+import logging
 import asyncio
-from dotenv import load_dotenv
 from telegram import Bot
 from telegram.constants import ParseMode
 from src.database import get_unsent_jobs, mark_jobs_as_sent, get_unsent_jobs_count
 
-# Load environment variables
-load_dotenv()
+# Load .env before reading env vars (must be first import)
+import src.config  # noqa: F401
+
+logger = logging.getLogger(__name__)
 
 # Telegram configuration
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+
+# Keyword filter — only send jobs whose title/description/requirements
+# contain at least one of these keywords (case-insensitive).
+# Set to empty string to send all jobs.
+# Comma-separated, e.g.: "Python,SQL,Java"
+TELEGRAM_KEYWORDS_RAW = os.getenv("TELEGRAM_KEYWORDS", "Python,SQL")
+TELEGRAM_KEYWORDS = [
+    kw.strip().lower()
+    for kw in TELEGRAM_KEYWORDS_RAW.split(",")
+    if kw.strip()
+]
 
 
 def format_job_message(job: dict) -> str:
@@ -117,8 +130,38 @@ def format_job_message(job: dict) -> str:
     
     if job_url:
         message_parts.append(f"\n🔗 <a href=\"{job_url}\">Ətraflı bax</a>")
-    
+
     return "\n".join(message_parts)
+
+
+def job_matches_keywords(job: dict, keywords: list) -> bool:
+    """
+    Check if a job matches any of the configured keywords.
+
+    Searches title, description, and requirements (case-insensitive).
+    If the keywords list is empty, all jobs match.
+
+    Args:
+        job: Job dictionary from database (with joined details).
+        keywords: List of lowercase keyword strings.
+
+    Returns:
+        True if the job matches at least one keyword (or no filter is set).
+    """
+    if not keywords:
+        return True  # no filter → send everything
+
+    # Combine all searchable text
+    title = (job.get("title") or "").lower()
+    description = (job.get("description") or "").lower()
+    requirements = (job.get("requirements") or "").lower()
+    combined = f"{title} {description} {requirements}"
+
+    for kw in keywords:
+        if kw in combined:
+            return True
+
+    return False
 
 
 async def send_job_to_telegram(bot: Bot, job: dict) -> bool:
@@ -142,58 +185,80 @@ async def send_job_to_telegram(bot: Bot, job: dict) -> bool:
         )
         return True
     except Exception as e:
-        print(f"✗ Failed to send job ID {job.get('id')}: {e}")
+        logger.error("Failed to send job ID %s: %s", job.get("id"), e)
         return False
 
 
 async def send_new_jobs() -> tuple:
     """
     Send all unsent jobs to Telegram.
-    
+
+    Only jobs whose title/description/requirements match the configured
+    TELEGRAM_KEYWORDS are actually sent.  Non-matching jobs are silently
+    marked as sent so they are not retried.
+
     Returns:
-        Tuple of (sent_count, failed_count)
+        Tuple of (sent_count, skipped_count, failed_count)
     """
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
-        print("✗ Telegram credentials not configured in .env")
-        return 0, 0
-    
+        logger.warning("Telegram credentials not configured in .env")
+        return 0, 0, 0
+
     # Get unsent jobs
     jobs = get_unsent_jobs()
-    
+
     if not jobs:
-        print("✓ No new jobs to send")
-        return 0, 0
-    
-    print(f"📤 Sending {len(jobs)} new jobs to Telegram...")
-    
+        logger.info("No new jobs to send")
+        return 0, 0, 0
+
+    logger.info(
+        "Processing %d unsent jobs (keywords: %s)...",
+        len(jobs),
+        TELEGRAM_KEYWORDS if TELEGRAM_KEYWORDS else "[ALL]",
+    )
+
     bot = Bot(token=TELEGRAM_BOT_TOKEN)
-    
+
     sent_ids = []
+    skipped_ids = []
     failed_count = 0
-    
+
     for job in jobs:
+        job_id = job["id"]
+        title_short = (job.get("title", "Unknown")[:50])
+
+        # --- keyword filter ---
+        if not job_matches_keywords(job, TELEGRAM_KEYWORDS):
+            skipped_ids.append(job_id)
+            logger.debug("Skipped (no keyword match): %s", title_short)
+            continue
+
+        # --- send to Telegram ---
         success = await send_job_to_telegram(bot, job)
         if success:
-            sent_ids.append(job['id'])
-            print(f"✓ Sent: {job.get('title', 'Unknown')[:50]}")
+            sent_ids.append(job_id)
+            logger.info("Sent: %s", title_short)
         else:
             failed_count += 1
-        
+
         # Small delay to avoid rate limiting
         await asyncio.sleep(0.5)
-    
-    # Mark sent jobs in database
-    if sent_ids:
-        marked = mark_jobs_as_sent(sent_ids)
-        print(f"✓ Marked {marked} jobs as sent in database")
-    
-    print(f"\n{'='*50}")
-    print(f"✅ Telegram notification completed!")
-    print(f"   Sent: {len(sent_ids)}")
-    print(f"   Failed: {failed_count}")
-    print(f"{'='*50}")
-    
-    return len(sent_ids), failed_count
+
+    # Mark all processed jobs (sent + skipped) as done so they aren't retried
+    all_processed = sent_ids + skipped_ids
+    if all_processed:
+        marked = mark_jobs_as_sent(all_processed)
+        logger.info("Marked %d jobs as processed in database", marked)
+
+    sep = "=" * 50
+    logger.info(sep)
+    logger.info("Telegram notification completed!")
+    logger.info("   Sent:    %d", len(sent_ids))
+    logger.info("   Skipped: %d", len(skipped_ids))
+    logger.info("   Failed:  %d", failed_count)
+    logger.info(sep)
+
+    return len(sent_ids), len(skipped_ids), failed_count
 
 
 async def send_test_message() -> bool:
@@ -204,20 +269,20 @@ async def send_test_message() -> bool:
         True if successful, False otherwise
     """
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
-        print("✗ Telegram credentials not configured in .env")
+        logger.warning("Telegram credentials not configured in .env")
         return False
-    
+
     try:
         bot = Bot(token=TELEGRAM_BOT_TOKEN)
         await bot.send_message(
             chat_id=TELEGRAM_CHAT_ID,
             text="🤖 <b>Glorri Jobs Bot</b>\n\n✓ Bot successfully configured!\n📋 Ready to send job notifications.",
-            parse_mode=ParseMode.HTML
+            parse_mode=ParseMode.HTML,
         )
-        print("✓ Test message sent successfully!")
+        logger.info("Test message sent successfully!")
         return True
     except Exception as e:
-        print(f"✗ Failed to send test message: {e}")
+        logger.error("Failed to send test message: %s", e)
         return False
 
 
@@ -232,12 +297,15 @@ def run_test_message():
 
 
 if __name__ == "__main__":
-    print("=" * 50)
-    print("Glorri Jobs Telegram Bot")
-    print("=" * 50)
-    
+    # When run directly, ensure .env is loaded and logging is configured
+    import src.config  # noqa: F401
+
+    logger.info("=" * 50)
+    logger.info("Glorri Jobs Telegram Bot")
+    logger.info("=" * 50)
+
     # Test the bot
-    print("\n--- Testing Bot Configuration ---")
+    logger.info("--- Testing Bot Configuration ---")
     if run_test_message():
-        print("\n--- Sending New Jobs ---")
-        sent, failed = run_send_jobs()
+        logger.info("--- Sending New Jobs ---")
+        sent, skipped, failed = run_send_jobs()

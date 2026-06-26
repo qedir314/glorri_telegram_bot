@@ -3,11 +3,13 @@ Database module for storing Glorri job listings in SQLite.
 """
 
 import os
+import logging
 import sqlite3
 from datetime import datetime
 from typing import List, Optional
 from dataclasses import dataclass
 
+logger = logging.getLogger(__name__)
 
 # Database configuration - store in data/ directory
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data")
@@ -78,7 +80,7 @@ def init_database():
     
     conn.commit()
     conn.close()
-    print("✓ Database initialized")
+    logger.info("Database initialized")
 
 
 def job_exists(job_url: str) -> bool:
@@ -257,8 +259,8 @@ def clear_all_jobs():
     
     deleted = cursor.rowcount
     conn.close()
-    
-    print(f"✓ Deleted {deleted} jobs from database")
+
+    logger.info("Deleted %d jobs from database", deleted)
     return deleted
 
 
@@ -272,8 +274,8 @@ def clear_all_job_details():
     
     deleted = cursor.rowcount
     conn.close()
-    
-    print(f"✓ Deleted {deleted} job details from database")
+
+    logger.info("Deleted %d job details from database", deleted)
     return deleted
 
 

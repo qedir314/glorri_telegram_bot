@@ -1,6 +1,6 @@
 # Glorri Jobs Telegram Bot
 
-A Telegram bot that scrapes job listings from [Glorri Jobs](https://jobs.glorri.az/) and sends notifications every 6 hours.
+A Telegram bot that scrapes job listings from [Glorri Jobs](https://jobs.glorri.az/) and sends notifications every 3 hours.
 
 ## Features
 
@@ -8,7 +8,7 @@ A Telegram bot that scrapes job listings from [Glorri Jobs](https://jobs.glorri.
 - 📊 Stores jobs in SQLite database
 - 📝 Fetches detailed job information asynchronously
 - 📤 Sends new job notifications to Telegram
-- ⏰ Runs automatically every 6 hours
+- ⏰ Runs automatically every 3 hours
 - 🐳 Docker support for easy deployment
 
 ## Project Structure

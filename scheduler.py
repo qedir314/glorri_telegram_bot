@@ -1,16 +1,16 @@
 """
 Scheduler for Glorri Jobs Bot.
-Runs scraping and Telegram notifications every 6 hours.
+Runs scraping and Telegram notifications every 3 hours.
 """
 
 import sys
+import logging
 from datetime import datetime
-from dotenv import load_dotenv
 from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
-# Load environment variables
-load_dotenv()
+# Load environment variables + configure logging (must be first)
+import src.config  # noqa: F401
 
 # Import from src packages
 from src.scraper import GlorriDriver, run_async_scraper
@@ -18,92 +18,97 @@ from src.database import insert_jobs_bulk, get_job_count
 from src.bot import run_send_jobs, run_test_message
 
 
+logger = logging.getLogger(__name__)
+
+
 def scrape_and_notify():
     """Main job: scrape new jobs and send notifications."""
-    print("\n" + "=" * 60)
-    print(f"🕐 Job started at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print("=" * 60)
-    
+    sep = "=" * 60
+    logger.info(sep)
+    logger.info("Job started at %s", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    logger.info(sep)
+
     try:
         # Step 1: Scrape new jobs
-        print("\n--- Step 1: Scraping jobs ---")
+        logger.info("--- Step 1: Scraping jobs ---")
         with GlorriDriver(headless=True) as driver:
             driver.wait_for_page_load(3)
             jobs = driver.scroll_until_days_old(target_days=7)
-            
+
             # Save to database
             inserted, skipped = insert_jobs_bulk(jobs)
-            print(f"✓ Inserted: {inserted} new jobs")
-            print(f"✓ Skipped: {skipped} existing jobs")
-            print(f"✓ Total in database: {get_job_count()}")
-        
+            logger.info("Inserted: %d new jobs", inserted)
+            logger.info("Skipped: %d existing jobs", skipped)
+            logger.info("Total in database: %d", get_job_count())
+
         # Step 2: Scrape job details for new jobs
-        print("\n--- Step 2: Fetching job details ---")
+        logger.info("--- Step 2: Fetching job details ---")
         run_async_scraper(max_concurrent=5)
-        
+
         # Step 3: Send new jobs to Telegram
-        print("\n--- Step 3: Sending to Telegram ---")
-        sent, failed = run_send_jobs()
-        
-        print("\n" + "=" * 60)
-        print(f"✅ Job completed at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        print("=" * 60)
-        
+        logger.info("--- Step 3: Sending to Telegram ---")
+        sent, skipped, failed = run_send_jobs()
+
+        logger.info(sep)
+        logger.info("Job completed at %s", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+        logger.info(sep)
+
     except Exception as e:
-        print(f"✗ Error during scheduled job: {e}")
+        logger.error("Error during scheduled job: %s", e, exc_info=True)
 
 
-def run_scheduler(interval_minutes: int = 360):
+def run_scheduler(interval_minutes: int = 180):
     """Run the scheduler.
-    
+
     Args:
-        interval_minutes: Interval in minutes (default 360 = 6 hours)
+        interval_minutes: Interval in minutes (default 180 = 3 hours)
     """
-    print("=" * 60)
-    print("🤖 Glorri Jobs Bot Scheduler")
-    print("=" * 60)
-    print(f"Started at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"Schedule: Every {interval_minutes} minutes")
-    print("=" * 60)
-    
+    sep = "=" * 60
+    logger.info(sep)
+    logger.info("Glorri Jobs Bot Scheduler")
+    logger.info(sep)
+    logger.info("Started at: %s", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    logger.info("Schedule: Every %d minutes", interval_minutes)
+    logger.info(sep)
+
     # Test Telegram connection first
-    print("\n--- Testing Telegram connection ---")
+    logger.info("--- Testing Telegram connection ---")
     if not run_test_message():
-        print("✗ Failed to connect to Telegram. Check your credentials.")
-        print("Continuing anyway...")
-    
+        logger.warning("Failed to connect to Telegram. Check your credentials.")
+        logger.warning("Continuing anyway...")
+
     # Run immediately on start
-    print("\n--- Running initial scrape ---")
+    logger.info("--- Running initial scrape ---")
     scrape_and_notify()
-    
+
     # Set up scheduler
     scheduler = BlockingScheduler()
-    
+
     # Schedule job at interval
     scheduler.add_job(
         scrape_and_notify,
         trigger=IntervalTrigger(minutes=interval_minutes),
-        id='scrape_and_notify',
-        name=f'Scrape and notify every {interval_minutes} minutes',
-        replace_existing=True
+        id="scrape_and_notify",
+        name=f"Scrape and notify every {interval_minutes} minutes",
+        replace_existing=True,
     )
-    
-    print("\n" + "=" * 60)
-    print("📅 Scheduler is running. Press Ctrl+C to stop.")
-    print(f"   Next run in {interval_minutes} minutes")
-    print("=" * 60)
-    
+
+    logger.info(sep)
+    logger.info("Scheduler is running. Press Ctrl+C to stop.")
+    logger.info("   Next run in %d minutes", interval_minutes)
+    logger.info(sep)
+
     try:
         scheduler.start()
     except (KeyboardInterrupt, SystemExit):
-        print("\n✓ Scheduler stopped")
+        logger.info("Scheduler stopped")
 
 
 def run_once():
     """Run scrape and notify once (for testing)."""
-    print("=" * 60)
-    print("🤖 Glorri Jobs Bot - Single Run")
-    print("=" * 60)
+    logger.info("=" * 60)
+    logger.info("Glorri Jobs Bot - Single Run")
+    logger.info("=" * 60)
     scrape_and_notify()
 
 

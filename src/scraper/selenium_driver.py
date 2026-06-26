@@ -4,8 +4,11 @@ This module provides a GlorriDriver class to interact with the job listing websi
 """
 
 import os
-from dotenv import load_dotenv
+import logging
 from selenium import webdriver
+
+# Load .env before reading any env vars (safe for standalone imports)
+import src.config  # noqa: F401
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
@@ -19,8 +22,7 @@ from datetime import datetime, timedelta
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
-# Load environment variables from .env file
-load_dotenv()
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -78,7 +80,7 @@ class GlorriDriver:
         chrome_options.add_argument("--disable-gpu")
         chrome_options.add_argument("--window-size=1920,1080")
         chrome_options.add_argument("--disable-blink-features=AutomationControlled")
-        chrome_options.add_argument("--remote-debugging-port=9222") # Fix for some Docker environments
+        chrome_options.add_argument("--remote-debugging-port=9222")  # Fix for some Docker environments
         chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
         chrome_options.add_experimental_option("useAutomationExtension", False)
         
@@ -95,12 +97,12 @@ class GlorriDriver:
         system_chromium_path = shutil.which("chromium") or "/usr/bin/chromium"
         
         if os.path.exists(system_driver_path) and os.path.exists(system_chromium_path):
-            print(f"✓ Using system Chromium at {system_chromium_path}")
-            print(f"✓ Using system ChromeDriver at {system_driver_path}")
+            logger.info("Using system Chromium at %s", system_chromium_path)
+            logger.info("Using system ChromeDriver at %s", system_driver_path)
             chrome_options.binary_location = system_chromium_path
             service = Service(executable_path=system_driver_path)
         else:
-            print("✓ Using WebDriverManager for Chrome")
+            logger.info("Using WebDriverManager for Chrome")
             service = Service(ChromeDriverManager().install())
 
         self.driver = webdriver.Chrome(service=service, options=chrome_options)
@@ -108,7 +110,7 @@ class GlorriDriver:
         
         # Navigate to the website
         self.driver.get(self.BASE_URL)
-        print(f"✓ Connected to {self.BASE_URL}")
+        logger.info("Connected to %s", self.BASE_URL)
         
         return self
     
@@ -117,7 +119,7 @@ class GlorriDriver:
         if self.driver:
             self.driver.quit()
             self.driver = None
-            print("✓ Browser closed")
+            logger.info("Browser closed")
     
     def __enter__(self):
         """Context manager entry."""
@@ -149,7 +151,7 @@ class GlorriDriver:
                 )
                 keyword_input.clear()
                 keyword_input.send_keys(keyword)
-                print(f"✓ Entered keyword: {keyword}")
+                logger.info("Entered keyword: %s", keyword)
             
             # Find and fill the city input
             if city:
@@ -158,20 +160,20 @@ class GlorriDriver:
                 )
                 city_input.clear()
                 city_input.send_keys(city)
-                print(f"✓ Entered city: {city}")
+                logger.info("Entered city: %s", city)
             
             # Click the search button
             search_button = self.wait.until(
                 EC.element_to_be_clickable((By.XPATH, "//button[contains(text(), 'Axtar')]"))
             )
             search_button.click()
-            print("✓ Search button clicked")
+            logger.info("Search button clicked")
             
             # Wait for results to load
             self.wait_for_page_load()
             
         except TimeoutException as e:
-            print(f"✗ Timeout while searching: {e}")
+            logger.error("Timeout while searching: %s", e)
     
     def get_job_listings(self, max_jobs: int = 20) -> List[JobListing]:
         """
@@ -219,13 +221,13 @@ class GlorriDriver:
                     jobs.append(job)
                     
                 except Exception as e:
-                    print(f"✗ Error parsing job card: {e}")
+                    logger.error("Error parsing job card: %s", e)
                     continue
             
-            print(f"✓ Found {len(jobs)} job listings")
+            logger.info("Found %d job listings", len(jobs))
             
         except TimeoutException:
-            print("✗ Timeout waiting for job listings")
+            logger.error("Timeout waiting for job listings")
         
         return jobs
     
@@ -240,7 +242,7 @@ class GlorriDriver:
         for i in range(scroll_count):
             self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
             time.sleep(delay)
-            print(f"✓ Scrolled {i + 1}/{scroll_count}")
+            logger.info("Scrolled %d/%d", i + 1, scroll_count)
     
     def parse_date(self, date_str: str) -> Optional[datetime]:
         """
@@ -332,7 +334,7 @@ class GlorriDriver:
             return None, None
             
         except Exception as e:
-            print(f"✗ Error getting last visible date: {e}")
+            logger.error("Error getting last visible date: %s", e)
             return None, None
     
     def scroll_until_days_old(self, target_days: int = 14, max_scrolls: int = 100, delay: float = 1.5, check_existing: bool = True) -> List[JobListing]:
@@ -348,7 +350,7 @@ class GlorriDriver:
         Returns:
             List of all job listings loaded during scrolling.
         """
-        print(f"📜 Scrolling until last vacancy is {target_days} days old...")
+        logger.info("Scrolling until last vacancy is %d days old...", target_days)
         
         # Get existing job URLs from database for duplicate checking
         existing_urls = set()
@@ -356,9 +358,9 @@ class GlorriDriver:
             try:
                 from src.database.db import get_existing_job_urls
                 existing_urls = get_existing_job_urls()
-                print(f"📊 Found {len(existing_urls)} existing jobs in database")
+                logger.info("Found %d existing jobs in database", len(existing_urls))
             except ImportError:
-                print("⚠️ Could not import database module, skipping duplicate check")
+                logger.warning("Could not import database module, skipping duplicate check")
                 check_existing = False
         
         scroll_count = 0
@@ -383,10 +385,11 @@ class GlorriDriver:
             
             if last_date:
                 days_ago = self.get_days_ago(last_date)
-                status_msg = f"✓ Scroll {scroll_count}: Last vacancy = {date_str} ({days_ago} days ago), {current_job_count} jobs loaded"
+                status_msg = "Scroll %d: Last vacancy = %s (%d days ago), %d jobs loaded" % (
+                    scroll_count, date_str, days_ago, current_job_count)
             else:
                 days_ago = 0
-                status_msg = f"✓ Scroll {scroll_count}: {current_job_count} jobs loaded"
+                status_msg = "Scroll %d: %d jobs loaded" % (scroll_count, current_job_count)
             
             # Check for existing jobs if enabled
             if check_existing and existing_urls:
@@ -403,31 +406,31 @@ class GlorriDriver:
                 new_urls = current_urls_normalized - existing_urls_normalized
                 new_count = len(new_urls)
                 
-                status_msg += f", {new_count} new"
-                print(status_msg)
+                status_msg += ", %d new" % new_count
+                logger.info(status_msg)
                 
                 # If no new jobs found, stop immediately
                 if new_count == 0:
-                    print(f"✅ Stopping: All jobs already in database")
+                    logger.info("Stopping: All jobs already in database")
                     break
             else:
-                print(status_msg)
+                logger.info(status_msg)
             
             # Check if reached target days
             if last_date and days_ago >= target_days:
-                print(f"✅ Reached target! Last vacancy is {days_ago} days old (>= {target_days})")
+                logger.info("Reached target! Last vacancy is %d days old (>= %d)", days_ago, target_days)
                 break
             
             # Check if we've reached the end of content
             if current_height == previous_height and current_job_count == previous_job_count:
-                print("⚠️ No more content to load")
+                logger.warning("No more content to load")
                 break
             
             previous_height = current_height
             previous_job_count = current_job_count
         
         if scroll_count >= max_scrolls:
-            print(f"⚠️ Reached maximum scroll limit ({max_scrolls})")
+            logger.warning("Reached maximum scroll limit (%d)", max_scrolls)
         
         # Return all job listings
         return self.get_all_job_listings()
@@ -489,13 +492,13 @@ class GlorriDriver:
                     )
                     jobs.append(job)
                     
-                except Exception as e:
+                except Exception:
                     continue
             
-            print(f"✓ Total job listings loaded: {len(jobs)}")
+            logger.info("Total job listings loaded: %d", len(jobs))
             
         except Exception as e:
-            print(f"✗ Error getting job listings: {e}")
+            logger.error("Error getting job listings: %s", e)
         
         return jobs
     
@@ -539,10 +542,10 @@ class GlorriDriver:
             except NoSuchElementException:
                 details['requirements'] = ""
             
-            print(f"✓ Retrieved details for: {details.get('title', 'Unknown')}")
+            logger.info("Retrieved details for: %s", details.get('title', 'Unknown'))
             
         except Exception as e:
-            print(f"✗ Error getting job details: {e}")
+            logger.error("Error getting job details: %s", e)
         
         return details
     
@@ -550,7 +553,7 @@ class GlorriDriver:
         """Take a screenshot of the current page."""
         if self.driver:
             self.driver.save_screenshot(filename)
-            print(f"✓ Screenshot saved: {filename}")
+            logger.info("Screenshot saved: %s", filename)
     
     def get_current_url(self) -> str:
         """Get the current page URL."""

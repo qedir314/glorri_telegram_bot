@@ -4,11 +4,14 @@ Uses aiohttp for async HTTP requests and BeautifulSoup for HTML parsing.
 """
 
 import asyncio
+import logging
 import aiohttp
 from bs4 import BeautifulSoup
 from typing import Optional, Dict, List
 import re
 from src.database import get_jobs_without_details, insert_job_details, get_job_details_count
+
+logger = logging.getLogger(__name__)
 
 
 # Request headers to mimic a browser
@@ -39,20 +42,20 @@ async def fetch_page(session: aiohttp.ClientSession, url: str, max_retries: int 
                 elif response.status == 429:
                     # Rate limited - wait and retry
                     wait_time = (attempt + 1) * 10  # 10, 20, 30 seconds
-                    print(f"⚠ Rate limited (429), waiting {wait_time}s before retry...")
+                    logger.warning("Rate limited (429), waiting %ds before retry...", wait_time)
                     await asyncio.sleep(wait_time)
                     continue
                 else:
-                    print(f"✗ Failed to fetch {url}: Status {response.status}")
+                    logger.error("Failed to fetch %s: Status %d", url, response.status)
                     return None
         except asyncio.TimeoutError:
-            print(f"✗ Timeout fetching {url}")
+            logger.error("Timeout fetching %s", url)
             return None
         except Exception as e:
-            print(f"✗ Error fetching {url}: {e}")
+            logger.error("Error fetching %s: %s", url, e)
             return None
-    
-    print(f"✗ Max retries exceeded for {url}")
+
+    logger.error("Max retries exceeded for %s", url)
     return None
 
 
@@ -260,9 +263,9 @@ async def scrape_job_details(job: dict, session: aiohttp.ClientSession, semaphor
         )
         
         if success:
-            print(f"✓ Scraped details for job ID {job_id}")
+            logger.info("Scraped details for job ID %d", job_id)
         else:
-            print(f"⚠ Job ID {job_id} details already exist")
+            logger.warning("Job ID %d details already exist", job_id)
         
         # Longer delay to avoid rate limiting (429 errors)
         await asyncio.sleep(3)
@@ -282,13 +285,13 @@ async def scrape_all_job_details(max_concurrent: int = 2) -> tuple:
     """
     # Get jobs without details
     jobs = get_jobs_without_details()
-    
+
     if not jobs:
-        print("✓ All jobs already have details scraped")
+        logger.info("All jobs already have details scraped")
         return 0, 0
-    
-    print(f"📋 Found {len(jobs)} jobs without details")
-    print(f"🚀 Starting async scraping with {max_concurrent} concurrent requests...")
+
+    logger.info("Found %d jobs without details", len(jobs))
+    logger.info("Starting async scraping with %d concurrent requests...", max_concurrent)
     
     # Create semaphore to limit concurrent requests
     semaphore = asyncio.Semaphore(max_concurrent)
@@ -307,19 +310,20 @@ async def scrape_all_job_details(max_concurrent: int = 2) -> tuple:
         # Count results
         for result in results:
             if isinstance(result, Exception):
-                print(f"✗ Task failed with exception: {result}")
+                logger.error("Task failed with exception: %s", result)
                 failed += 1
             elif result:
                 successful += 1
             else:
                 failed += 1
-    
-    print(f"\n{'='*50}")
-    print(f"✅ Scraping completed!")
-    print(f"   Successful: {successful}")
-    print(f"   Failed: {failed}")
-    print(f"   Total details in DB: {get_job_details_count()}")
-    print(f"{'='*50}")
+
+    sep = "=" * 50
+    logger.info(sep)
+    logger.info("Scraping completed!")
+    logger.info("   Successful: %d", successful)
+    logger.info("   Failed: %d", failed)
+    logger.info("   Total details in DB: %d", get_job_details_count())
+    logger.info(sep)
     
     return successful, failed
 
@@ -338,8 +342,11 @@ def run_async_scraper(max_concurrent: int = 5) -> tuple:
 
 
 if __name__ == "__main__":
-    print("=" * 50)
-    print("Glorri Job Details Async Scraper")
-    print("=" * 50)
-    
+    import src.config  # noqa: F401  -- ensure .env + logging
+
+    sep = "=" * 50
+    logger.info(sep)
+    logger.info("Glorri Job Details Async Scraper")
+    logger.info(sep)
+
     successful, failed = run_async_scraper(max_concurrent=5)
