@@ -11,7 +11,8 @@ from .db import (
     get_unsent_jobs_count,
     get_jobs_without_details,
     insert_job_details,
-    get_job_details_count
+    get_job_details_count,
+    reset_sent_jobs_without_details,
 )
 
 __all__ = [
@@ -26,5 +27,6 @@ __all__ = [
     'get_unsent_jobs_count',
     'get_jobs_without_details',
     'insert_job_details',
-    'get_job_details_count'
+    'get_job_details_count',
+    'reset_sent_jobs_without_details',
 ]

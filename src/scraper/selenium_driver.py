@@ -80,7 +80,6 @@ class GlorriDriver:
         chrome_options.add_argument("--disable-gpu")
         chrome_options.add_argument("--window-size=1920,1080")
         chrome_options.add_argument("--disable-blink-features=AutomationControlled")
-        chrome_options.add_argument("--remote-debugging-port=9222")  # Fix for some Docker environments
         chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
         chrome_options.add_experimental_option("useAutomationExtension", False)
         
@@ -337,7 +336,7 @@ class GlorriDriver:
             logger.error("Error getting last visible date: %s", e)
             return None, None
     
-    def scroll_until_days_old(self, target_days: int = 14, max_scrolls: int = 100, delay: float = 1.5, check_existing: bool = True) -> List[JobListing]:
+    def scroll_until_days_old(self, target_days: int = 14, max_scrolls: int = 100, delay: float = 1.5) -> List[JobListing]:
         """
         Scroll until the last vacancy is at least target_days old.
         
@@ -345,23 +344,11 @@ class GlorriDriver:
             target_days: Stop scrolling when last vacancy is this many days old (default 14).
             max_scrolls: Maximum number of scroll attempts to prevent infinite loops.
             delay: Delay between scrolls in seconds.
-            check_existing: If True, stop early if all visible jobs already exist in database.
             
         Returns:
             List of all job listings loaded during scrolling.
         """
         logger.info("Scrolling until last vacancy is %d days old...", target_days)
-        
-        # Get existing job URLs from database for duplicate checking
-        existing_urls = set()
-        if check_existing:
-            try:
-                from src.database.db import get_existing_job_urls
-                existing_urls = get_existing_job_urls()
-                logger.info("Found %d existing jobs in database", len(existing_urls))
-            except ImportError:
-                logger.warning("Could not import database module, skipping duplicate check")
-                check_existing = False
         
         scroll_count = 0
         previous_height = 0
@@ -390,31 +377,8 @@ class GlorriDriver:
             else:
                 days_ago = 0
                 status_msg = "Scroll %d: %d jobs loaded" % (scroll_count, current_job_count)
-            
-            # Check for existing jobs if enabled
-            if check_existing and existing_urls:
-                # Normalize URLs by removing query parameters for comparison
-                def normalize_url(url):
-                    if url and '?' in url:
-                        return url.split('?')[0]
-                    return url
-                
-                current_urls_raw = {card.get_attribute("href") for card in job_cards if card.get_attribute("href")}
-                current_urls_normalized = {normalize_url(url) for url in current_urls_raw}
-                existing_urls_normalized = {normalize_url(url) for url in existing_urls}
-                
-                new_urls = current_urls_normalized - existing_urls_normalized
-                new_count = len(new_urls)
-                
-                status_msg += ", %d new" % new_count
-                logger.info(status_msg)
-                
-                # If no new jobs found, stop immediately
-                if new_count == 0:
-                    logger.info("Stopping: All jobs already in database")
-                    break
-            else:
-                logger.info(status_msg)
+
+            logger.info(status_msg)
             
             # Check if reached target days
             if last_date and days_ago >= target_days:
@@ -447,18 +411,25 @@ class GlorriDriver:
         try:
             # Find all job card elements
             job_cards = self.driver.find_elements(By.CSS_SELECTOR, "a[href*='/vacancies/']")
+
+            skipped_no_url = 0
+            skipped_few_lines = 0
+            skipped_parse_error = 0
             
             for card in job_cards:
                 try:
                     # Skip cards that don't look like job listings (e.g., carousel items)
                     job_url = card.get_attribute("href")
                     if not job_url or "/vacancies/" not in job_url:
+                        skipped_no_url += 1
                         continue
                     
                     card_text = card.text
                     lines = [l.strip() for l in card_text.split('\n') if l.strip()]
                     
                     if len(lines) < 2:
+                        skipped_few_lines += 1
+                        logger.debug("Skipped card (few lines): %s", job_url)
                         continue
                     
                     # Try to get title from h3
@@ -492,10 +463,14 @@ class GlorriDriver:
                     )
                     jobs.append(job)
                     
-                except Exception:
+                except Exception as e:
+                    skipped_parse_error += 1
+                    logger.debug("Skipped card (parse error): %s", e)
                     continue
-            
-            logger.info("Total job listings loaded: %d", len(jobs))
+
+            skipped_total = skipped_no_url + skipped_few_lines + skipped_parse_error
+            logger.info("Total job listings loaded: %d (skipped: %d no-url, %d few-lines, %d parse-errors)",
+                        len(jobs), skipped_no_url, skipped_few_lines, skipped_parse_error)
             
         except Exception as e:
             logger.error("Error getting job listings: %s", e)

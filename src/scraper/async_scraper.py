@@ -283,8 +283,8 @@ async def scrape_all_job_details(max_concurrent: int = 2) -> tuple:
     Returns:
         Tuple of (successful_count, failed_count)
     """
-    # Get jobs without details
-    jobs = get_jobs_without_details()
+    # Get jobs without details (only from jobs.glorri.az)
+    jobs = get_jobs_without_details(url_pattern="jobs.glorri.az")
 
     if not jobs:
         logger.info("All jobs already have details scraped")

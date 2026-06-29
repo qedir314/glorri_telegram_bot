@@ -55,6 +55,9 @@ def format_job_message(job: dict) -> str:
     company = job.get('company', 'Unknown Company')
     location = job.get('location', 'Unknown Location')
     job_url = job.get('job_url', '')
+    # Normalize relative URLs (glorri stores /vacancies/xxx)
+    if job_url and job_url.startswith('/'):
+        job_url = f"https://jobs.glorri.az{job_url}"
     posted_date = job.get('posted_date', '')
     job_type = job.get('job_type', '')
     deadline = job.get('deadline', '')
@@ -165,7 +168,8 @@ def job_matches_keywords(job: dict, keywords: list) -> bool:
     combined = f"{title} {description} {requirements}"
 
     for kw in keywords:
-        if kw in combined:
+        # Use word-boundary matching so "it" doesn't match "digital"
+        if re.search(r'\b' + re.escape(kw) + r'\b', combined):
             return True
 
     return False
@@ -289,18 +293,31 @@ async def send_new_jobs() -> tuple:
         # Delay between messages (constant rate to avoid flood limits)
         await asyncio.sleep(TELEGRAM_MESSAGE_DELAY)
 
-    # Mark only sent + skipped jobs as processed
-    # Flood-controlled and other-failure jobs stay unsent for retry
-    all_processed = sent_ids + skipped_ids
-    if all_processed:
-        marked = mark_jobs_as_sent(all_processed)
-        logger.info("Marked %d jobs as processed in database", marked)
+    # Mark sent jobs as processed.
+    # Filtered-out jobs are ONLY marked if they already have descriptions
+    # (meaning the detail scraper ran).  Jobs without descriptions stay
+    # unsent so they can be retried after the detail scraper fetches them.
+    if sent_ids:
+        mark_jobs_as_sent(sent_ids)
+
+    skipped_with_details = []
+    skipped_without_details = 0
+    for jid in skipped_ids:
+        job = next((j for j in jobs if j["id"] == jid), None)
+        if job and (job.get("description") or job.get("requirements")):
+            skipped_with_details.append(jid)
+        else:
+            skipped_without_details += 1
+
+    if skipped_with_details:
+        mark_jobs_as_sent(skipped_with_details)
 
     sep = "=" * 50
     logger.info(sep)
     logger.info("Telegram notification completed!")
-    logger.info("   Sent:             %d", len(sent_ids))
-    logger.info("   Skipped (filter): %d", len(skipped_ids))
+    logger.info("   Sent:                %d", len(sent_ids))
+    logger.info("   Skipped (filter):    %d", len(skipped_ids))
+    logger.info("   Of which no details: %d (will retry)", skipped_without_details)
     logger.info("   Failed (will retry): %d", other_fail_count)
     logger.info(sep)
 

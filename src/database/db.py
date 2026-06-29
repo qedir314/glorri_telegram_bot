@@ -335,19 +335,35 @@ def insert_job_details(
         conn.close()
 
 
-def get_jobs_without_details() -> list:
-    """Get all jobs that don't have details scraped yet."""
+def get_jobs_without_details(url_pattern: str = None) -> list:
+    """Get all jobs that don't have details scraped yet.
+
+    Args:
+        url_pattern: Optional URL filter (e.g. 'jobs.glorri.az' or 'jobsearch.az').
+                     Only jobs whose job_url contains this pattern are returned.
+
+    Returns:
+        List of job dicts without details.
+    """
     conn = get_connection()
     cursor = conn.cursor()
-    
-    cursor.execute("""
+
+    query = """
         SELECT j.* FROM jobs j
         LEFT JOIN job_details jd ON j.id = jd.job_id
         WHERE jd.id IS NULL
-        ORDER BY j.posted_date DESC
-    """)
+    """
+    params = []
+
+    if url_pattern:
+        query += " AND j.job_url LIKE ?"
+        params.append(f"%{url_pattern}%")
+
+    query += " ORDER BY j.posted_date DESC"
+
+    cursor.execute(query, params)
     rows = cursor.fetchall()
-    
+
     conn.close()
     return [dict(row) for row in rows]
 
@@ -435,6 +451,60 @@ def mark_jobs_as_sent(job_ids: list) -> int:
         UPDATE jobs SET is_sent_to_telegram = 1
         WHERE id IN ({placeholders})
     """, job_ids)
+    
+    conn.commit()
+    updated = cursor.rowcount
+    conn.close()
+    
+    return updated
+
+
+def delete_empty_job_details(url_pattern: str = None) -> int:
+    """Delete job_details rows that have no description AND no requirements.
+    
+    Args:
+        url_pattern: Optional URL filter (e.g. 'jobsearch.az').
+    
+    Returns:
+        Number of rows deleted.
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    if url_pattern:
+        cursor.execute("""
+            DELETE FROM job_details
+            WHERE description IS NULL
+              AND requirements IS NULL
+              AND job_id IN (SELECT id FROM jobs WHERE job_url LIKE ?)
+        """, (f"%{url_pattern}%",))
+    else:
+        cursor.execute("""
+            DELETE FROM job_details
+            WHERE description IS NULL AND requirements IS NULL
+        """)
+    
+    conn.commit()
+    deleted = cursor.rowcount
+    conn.close()
+    return deleted
+
+
+def reset_sent_jobs_without_details() -> int:
+    """Reset is_sent_to_telegram flag for jobs that were marked sent
+    but never had their details scraped (no description/requirements).
+    
+    Returns:
+        Number of jobs reset.
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("""
+        UPDATE jobs SET is_sent_to_telegram = 0
+        WHERE is_sent_to_telegram = 1
+          AND id NOT IN (SELECT job_id FROM job_details)
+    """)
     
     conn.commit()
     updated = cursor.rowcount
